@@ -13,6 +13,10 @@
 \usepackage{float}
 \usepackage{subcaption}
 \usepackage{changepage}
+\usepackage{geometry}
+
+% Marginesy
+\geometry{a4paper, margin=2.5cm}
 
 % Fix for Polish algorithm name
 \makeatletter
@@ -27,7 +31,7 @@
 \algrenewcommand\ALG@beginalgorithmic{\footnotesize}
 \makeatother
 
-\title{Sprawozdanie z implementacji usprawnień algorytmu przeszukiwania lokalnego dla zmodyfikowanego problemu komiwojażera}
+\title{Sprawozdanie z implementacji algorytmów MSLS, ILS i LNS dla zmodyfikowanego problemu komiwojażera}
 \author{Filip Rosiak 151799  \and Eryk Stec 152948}
 \date{\today}
 
@@ -36,7 +40,7 @@
 \maketitle
 
 \begin{abstract}
-W niniejszym sprawozdaniu przedstawiono implementację i analizę dwóch usprawnień dla algorytmu przeszukiwania lokalnego w wersji stromej (steepest descent) dla zmodyfikowanego problemu komiwojażera. Zaimplementowano strategię listy ruchów (Move List) oraz strategię ruchów kandydackich (Candidate Moves) w celu poprawy efektywności czasowej standardowego przeszukiwania lokalnego. Porównano wyniki uzyskane przez te usprawnione wersje z wersją podstawową oraz z najlepszą heurystyką konstrukcyjną z poprzedniego zadania (Ważony 2-żal). Eksperymenty przeprowadzono na instancjach kroa200 i krob200, startując z rozwiązań losowych.
+W niniejszym sprawozdaniu przedstawiono implementację i analizę trzech rozszerzeń algorytmu przeszukiwania lokalnego dla zmodyfikowanego problemu komiwojażera: Multiple Start Local Search (MSLS), Iterated Local Search (ILS) oraz Large Neighborhood Search (LNS). Jako bazowy algorytm lokalnego przeszukiwania wykorzystano najlepszy wariant z poprzedniego zadania, czyli Candidate Steepest z k=10. Opisano zastosowane mechanizmy perturbacji dla ILS (mała perturbacja przez losowe ruchy) i LNS (typu Destroy-Repair z heurystyczną naprawą). Porównano wyniki uzyskane przez zaimplementowane metaheurystyki, w tym wariant LNS bez lokalnego przeszukiwania po naprawie (LNSa). Eksperymenty przeprowadzono na instancjach kroa200 i krob200, zgodnie z warunkami opisanymi w zadaniu, w tym z wykorzystaniem średniego czasu MSLS jako limitu czasowego dla ILS i LNS.
 \end{abstract}
 
 \section{Opis problemu}
@@ -45,247 +49,225 @@ Rozważany problem jest modyfikacją klasycznego problemu komiwojażera. Dany je
 Do testów wykorzystano instancje \texttt{kroa200} i \texttt{krob200} z biblioteki TSPLib. Są to dwuwymiarowe instancje euklidesowe, gdzie dla każdego wierzchołka podane są dwie współrzędne, a odległość pomiędzy wierzchołkami jest odległością euklidesową zaokrąglaną do liczby całkowitej.
 
 \section{Zaimplementowane algorytmy}
-W ramach zadania zaimplementowano i porównano następujące warianty algorytmu przeszukiwania lokalnego, startujące z losowych rozwiązań początkowych i wykorzystujące sąsiedztwo oparte na wymianie krawędzi (2-opt) zarówno wewnątrz tras (intra-route), jak i wymianie wierzchołków między trasami (inter-route):
+W ramach zadania zaimplementowano i porównano następujące metaheurystyki, oparte na najlepszym algorytmie lokalnego przeszukiwania (LS) z poprzedniego zadania - Candidate Steepest (k=10) z sąsiedztwem Edge Exchange i startem z losowych rozwiązań:
 
-\subsection{Lokalne przeszukiwanie z listą ruchów (Move List Steepest)}
-Usprawniona wersja algorytmu stromego, która wykorzystuje pamięć do przechowywania potencjalnych ruchów poprawiających. Zamiast przeszukiwać wszystkie ruchy w każdej iteracji, algorytm utrzymuje posortowaną listę ruchów (\texttt{move\_list}) i w każdej iteracji wybiera z niej najlepszy *ważny* ruch. Po wykonaniu ruchu lista jest aktualizowana: usuwa się wykonany ruch, ruchy zneaktualizowane przez zmianę oraz dodaje nowe ruchy wygenerowane tylko w sąsiedztwie zmodyfikowanych wierzchołków. Pozwala to potencjalnie zaoszczędzić czas obliczeń. Pseudokod przedstawiono w Algorytmie~\ref{alg:move_list}.
+\subsection{Multiple Start Local Search (MSLS)}
+Algorytm polega na wielokrotnym uruchomieniu bazowego algorytmu lokalnego przeszukiwania (LS) z różnych, losowo generowanych rozwiązań początkowych. Wynikiem końcowym jest najlepsze rozwiązanie znalezione spośród wszystkich uruchomień LS. W eksperymentach wykonano 200 iteracji (uruchomień LS) dla każdej instancji. Pseudokod przedstawiono w Algorytmie~\ref{alg:msls}.
 
 \begin{algorithm}[H]
-\caption{Algorytm: Local Search (MoveListSteepest z Pamięcią)}
-\label{alg:move_list}
+\caption{Algorytm: Multiple Start Local Search (MSLS)}
+\label{alg:msls}
 \begin{algorithmic}[1]
-\Require \texttt{instance}, \texttt{initial\_solution\_generator}, \texttt{neighborhood\_type}
-\Ensure \texttt{best\_solution}
-\State \texttt{current\_solution} $\leftarrow$ \texttt{initial\_solution\_generator(instance)}
-\State \texttt{current\_cost} $\leftarrow$ \texttt{calculate\_cost(current\_solution, instance)}
-\State \texttt{move\_list} $\leftarrow$ \texttt{generate\_all\_improving\_moves(current\_solution, instance, neighborhood\_type)}
-\State Sortuj \texttt{move\_list} rosnąco według \texttt{delta}
-\Loop
-    \State \texttt{cost\_before\_iter} $\leftarrow$ \texttt{current\_cost}
-    \State \texttt{found\_improving\_move} $\leftarrow$ \texttt{false}
-    \State \texttt{best\_move} $\leftarrow$ \texttt{null}
-    \State \texttt{best\_move\_index} $\leftarrow$ \texttt{null}
-    \For{each \texttt{(move, index)} in \texttt{move\_list}}
-        \If{\texttt{is\_move\_valid(move, current\_solution)} \textbf{and} \texttt{move.delta < 0}}
-            \State \texttt{best\_move} $\leftarrow$ \texttt{clone(move)}
-            \State \texttt{best\_move\_index} $\leftarrow$ \texttt{index}
-            \State \texttt{found\_improving\_move} $\leftarrow$ \texttt{true}
-            \State \textbf{break} \Comment{Znaleziono najlepszy ważny ruch}
-        \EndIf
-    \EndFor
-    \If{\textbf{not} \texttt{found\_improving\_move}}
-        \State \textbf{break} \Comment{Brak ważnych ruchów poprawiających}
+\Require \texttt{instance}, \texttt{base\_local\_search}, \texttt{iterations}
+\Ensure \texttt{best\_overall\_solution}
+\State \texttt{best\_overall\_solution} $\leftarrow$ \texttt{null}
+\State \texttt{min\_cost} $\leftarrow$ $\infty$
+\For{$i \leftarrow 1$ to \texttt{iterations}}
+    \State \texttt{start\_solution} $\leftarrow$ \texttt{generate\_random\_solution(instance)}
+    \State \texttt{current\_solution} $\leftarrow$ \texttt{base\_local\_search(start\_solution, instance)}
+    \State \texttt{current\_cost} $\leftarrow$ \texttt{calculate\_cost(current\_solution, instance)}
+    \If{\texttt{current\_cost < min\_cost}}
+        \State \texttt{min\_cost} $\leftarrow$ \texttt{current\_cost}
+        \State \texttt{best\_overall\_solution} $\leftarrow$ \texttt{current\_solution}
     \EndIf
-    \State Apply Move(\texttt{best\_move}, \texttt{current\_solution})
-    \State \texttt{current\_cost} $\leftarrow$ \texttt{current\_cost} + \texttt{best\_move.delta}
-    \State Usuń element o indeksie \texttt{best\_move\_index} z \texttt{move\_list}
-    \State \texttt{affected\_nodes} $\leftarrow$ \texttt{identify\_affected\_nodes(best\_move, current\_solution)}
-    \State Usuń z \texttt{move\_list} ruchy angażujące węzły z \texttt{affected\_nodes}
-    \State \texttt{new\_potential\_moves} $\leftarrow$ \texttt{generate\_moves\_around\_nodes(affected\_nodes, current\_solution, instance, neighborhood\_type)}
-    \For{each \texttt{new\_move} in \texttt{new\_potential\_moves}}
-        \If{\texttt{new\_move.delta < 0} \textbf{and} \texttt{new\_move} nie jest w \texttt{move\_list}}
-            \State Dodaj \texttt{new\_move} do \texttt{move\_list}
-        \EndIf
-    \EndFor
-    \State Sortuj \texttt{move\_list} rosnąco według \texttt{delta}
-    \If{\texttt{current\_cost} $\ge$ \texttt{cost\_before\_iter}}
-        \State \textbf{break}
-    \EndIf
-\EndLoop
-\State \Return \texttt{current\_solution}
+\EndFor
+\State \Return \texttt{best\_overall\_solution}
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Lokalne przeszukiwanie z ruchami kandydackimi (Candidate Steepest)}
-Kolejne usprawnienie algorytmu stromego, które ogranicza liczbę rozważanych ruchów w każdej iteracji. Zamiast oceniać wszystkie możliwe ruchy, algorytm bierze pod uwagę tylko ruchy *kandydackie*. Ruch jest kandydacki, jeśli modyfikuje sąsiedztwo węzłów, które są blisko siebie w przestrzeni metrycznej. W implementacji dla każdego węzła \texttt{node\_a} rozważane są tylko ruchy angażujące \texttt{node\_a} i jednego z jego \texttt{k} najbliższych sąsiadów (\texttt{node\_b}). Wartość \texttt{k=10} została użyta w eksperymentach. Spośród wszystkich wygenerowanych ruchów kandydackich wybierany jest najlepszy. Pseudokod przedstawiono w Algorytmie~\ref{alg:candidate}.
+\subsection{Iterated Local Search (ILS)}
+Algorytm rozpoczyna od znalezienia lokalnego optimum za pomocą bazowego LS. Następnie iteracyjnie wykonuje kroki perturbacji i lokalnego przeszukiwania. Perturbacja polega na wprowadzeniu niewielkich, losowych zmian w bieżącym najlepszym rozwiązaniu, aby umożliwić ucieczkę z lokalnego optimum. Po perturbacji ponownie stosowany jest bazowy LS. Nowe rozwiązanie jest akceptowane, jeśli jest lepsze od dotychczas najlepszego. Jako perturbację zaimplementowano \textbf{Perturbację 1}, która wykonuje 10 losowych ruchów (wymiana wierzchołków lub krawędzi) bez sprawdzania ich wpływu na koszt. Warunkiem stopu dla ILS był limit czasowy równy średniemu czasowi wykonania MSLS dla danej instancji. Pseudokod przedstawiono w Algorytmie~\ref{alg:ils}.
 
 \begin{algorithm}[H]
-\caption{Algorytm: Local Search (CandidateSteepest)}
-\label{alg:candidate}
+\caption{Algorytm: Iterated Local Search (ILS)}
+\label{alg:ils}
 \begin{algorithmic}[1]
-\Require \texttt{instance}, \texttt{initial\_solution\_generator}, \texttt{neighborhood\_type}, \texttt{k}
+\Require \texttt{instance}, \texttt{base\_local\_search}, \texttt{perturbation}, \texttt{time\_limit}
 \Ensure \texttt{best\_solution}
-\State Precompute k-nearest neighbors for all nodes in \texttt{instance}
-\State \texttt{current\_solution} $\leftarrow$ \texttt{initial\_solution\_generator(instance)}
-\State \texttt{current\_cost} $\leftarrow$ \texttt{calculate\_cost(current\_solution, instance)}
-\Loop
-    \State \texttt{cost\_before\_iter} $\leftarrow$ \texttt{current\_cost}
-    \State \texttt{candidate\_improving\_moves} $\leftarrow$ Pusta lista
-    \For{each node \texttt{node\_a} in \texttt{instance}}
-        \State \texttt{neighbors\_of\_a} $\leftarrow$ Get k-nearest neighbors of \texttt{node\_a}
-        \For{each \texttt{node\_b} in \texttt{neighbors\_of\_a}}
-            \If{\texttt{node\_a} == \texttt{node\_b}} \textbf{continue} \EndIf
-            \State \texttt{location\_a} $\leftarrow$ \texttt{find\_node(current\_solution, node\_a)}
-            \State \texttt{location\_b} $\leftarrow$ \texttt{find\_node(current\_solution, node\_b)}
-            \If{\texttt{location\_a} is \texttt{null} or \texttt{location\_b} is \texttt{null}} \textbf{continue} \EndIf
-            \State \texttt{potential\_moves} $\leftarrow$ \texttt{evaluate\_moves\_for\_pair(node\_a, node\_b, ..., current\_solution)}
-            \For{each \texttt{move} in \texttt{potential\_moves}}
-                \If{\texttt{move.delta < 0}}
-                    \State Dodaj \texttt{move} do \texttt{candidate\_improving\_moves}
-                \EndIf
-            \EndFor
-        \EndFor
-    \EndFor
-    \State \texttt{best\_candidate\_move} $\leftarrow$ \texttt{null}
-    \If{\texttt{candidate\_improving\_moves} is not empty}
-        \State \texttt{best\_candidate\_move} $\leftarrow$ Find move with minimum \texttt{delta} in \texttt{candidate\_improving\_moves}
+\State \texttt{start\_solution} $\leftarrow$ \texttt{generate\_random\_solution(instance)}
+\State \texttt{best\_solution} $\leftarrow$ \texttt{base\_local\_search(start\_solution, instance)}
+\State \texttt{best\_cost} $\leftarrow$ \texttt{calculate\_cost(best\_solution, instance)}
+\State \texttt{start\_time} $\leftarrow$ \texttt{current\_time()}
+\While{\texttt{current\_time()} - \texttt{start\_time} < \texttt{time\_limit}}
+    \State \texttt{current\_solution} $\leftarrow$ \texttt{clone(best\_solution)}
+    \State \texttt{perturbation(current\_solution, instance)}
+    \State \texttt{current\_solution} $\leftarrow$ \texttt{base\_local\_search(current\_solution, instance)}
+    \State \texttt{current\_cost} $\leftarrow$ \texttt{calculate\_cost(current\_solution, instance)}
+    \If{\texttt{current\_cost < best\_cost}}
+        \State \texttt{best\_solution} $\leftarrow$ \texttt{current\_solution}
+        \State \texttt{best\_cost} $\leftarrow$ \texttt{current\_cost}
     \EndIf
-    \If{\texttt{best\_candidate\_move} is \texttt{null}}
-        \State \textbf{break} \Comment{Brak poprawiających ruchów kandydackich}
-    \Else
-        \State Apply Move(\texttt{best\_candidate\_move}, \texttt{current\_solution})
-        \State \texttt{current\_cost} $\leftarrow$ \texttt{current\_cost} + \texttt{best\_candidate\_move.delta}
+\EndWhile
+\State \Return \texttt{best\_solution}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Large Neighborhood Search (LNS)}
+Podobnie jak ILS, algorytm LNS iteracyjnie modyfikuje rozwiązanie, ale wykorzystuje bardziej radykalną perturbację typu Destroy-Repair. Krok \textbf{Destroy} polega na usunięciu pewnego odsetka (w implementacji 20\%) losowo wybranych wierzchołków z bieżącego rozwiązania. Krok \textbf{Repair} polega na ponownym wstawieniu usuniętych wierzchołków do częściowego rozwiązania za pomocą heurystyki konstrukcyjnej - w tym przypadku zaimplementowano wariant heurystyki \textbf{Ważony 2-żal} (Weighted Regret) do naprawy rozwiązania. Perturbację tę nazwano \textbf{Perturbacja Destroy-Repair (20\%)}. Po naprawie (opcjonalnie) stosowany jest bazowy LS. Zaimplementowano dwie wersje:
+\begin{itemize}
+    \item \textbf{LNS}: Zastosowanie bazowego LS po kroku Repair.
+    \item \textbf{LNSa}: Bez stosowania bazowego LS po kroku Repair (LS stosowane tylko na początku, o ile start był losowy).
+\end{itemize}
+Warunkiem stopu dla LNS/LNSa był limit czasowy równy średniemu czasowi wykonania MSLS dla danej instancji. Pseudokod przedstawiono w Algorytmie~\ref{alg:lns}.
+
+\begin{algorithm}[H]
+\caption{Algorytm: Large Neighborhood Search (LNS)}
+\label{alg:lns}
+\begin{algorithmic}[1]
+\Require \texttt{instance}, \texttt{base\_local\_search}, \texttt{destroy}, \texttt{repair}, \texttt{apply\_ls\_after\_repair}, \texttt{apply\_ls\_to\_initial}, \texttt{time\_limit}
+\Ensure \texttt{best\_solution}
+\State \texttt{best\_solution} $\leftarrow$ \texttt{generate\_random\_solution(instance)}
+\If{\texttt{apply\_ls\_to\_initial}}
+    \State \texttt{best\_solution} $\leftarrow$ \texttt{base\_local\_search(best\_solution, instance)}
+\EndIf
+\State \texttt{best\_cost} $\leftarrow$ \texttt{calculate\_cost(best\_solution, instance)}
+\State \texttt{start\_time} $\leftarrow$ \texttt{current\_time()}
+\While{\texttt{current\_time()} - \texttt{start\_time} < \texttt{time\_limit}}
+    \State \texttt{current\_solution} $\leftarrow$ \texttt{clone(best\_solution)}
+    \State \texttt{destroyed\_nodes} $\leftarrow$ \texttt{destroy(current\_solution, instance)}
+    \State \texttt{repair(current\_solution, destroyed\_nodes, instance)} \Comment{Używa Weighted Regret}
+    \If{\texttt{apply\_ls\_after\_repair}}
+        \State \texttt{current\_solution} $\leftarrow$ \texttt{base\_local\_search(current\_solution, instance)}
     \EndIf
-    \If{\texttt{current\_cost} $\ge$ \texttt{cost\_before\_iter}} \Comment{Opcjonalne sprawdzenie dla delty = 0}
-        \State \textbf{break}
+    \State \texttt{current\_cost} $\leftarrow$ \texttt{calculate\_cost(current\_solution, instance)}
+    \If{\texttt{current\_cost < best\_cost}}
+        \State \texttt{best\_solution} $\leftarrow$ \texttt{current\_solution}
+        \State \texttt{best\_cost} $\leftarrow$ \texttt{current\_cost}
     \EndIf
-\EndLoop
-\State \Return \texttt{current\_solution}
+\EndWhile
+\State \Return \texttt{best\_solution}
 \end{algorithmic}
 \end{algorithm}
 
 \section{Wyniki eksperymentów}
-Każdy z algorytmów lokalnego przeszukiwania (Steepest, Move List, Candidate k=10) został uruchomiony 100 razy dla każdej instancji (kroa200, krob200), startując z losowo wygenerowanego rozwiązania początkowego. Jako punkt odniesienia dołączono również wyniki najlepszego algorytmu konstrukcyjnego z poprzedniego etapu (Ważony 2-żal), który był uruchamiany wielokrotnie z różnymi punktami startowymi, ale jest algorytmem deterministycznym dla danego startu. Poniżej przedstawiono zagregowane wyniki.
+Każdy z algorytmów (MSLS, ILS, LNS, LNSa) został uruchomiony 10 razy dla każdej instancji (kroa200, krob200). MSLS wykonywał 200 iteracji bazowego LS (Candidate Steepest k=10). Algorytmy ILS, LNS i LNSa działały przez czas równy średniemu czasowi wykonania MSLS dla danej instancji. Poniżej przedstawiono zagregowane wyniki.
 
 \begin{table}[H]
 \centering
-\caption{Wyniki jakościowe algorytmów (średnia i zakres [min - max] kosztu)}
-\label{tab:quality_results}
-\begin{tabular}{@{}lcc@{}}
+\caption{Wyniki algorytmów (średnia, zakres [min - max] kosztu, średni czas, średnia liczba iteracji dla ILS/LNS)}
+\label{tab:results}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Algorytm} & \textbf{kroa200} & \textbf{krob200} \\
+\textbf{Algorytm} & \textbf{Koszt min} & \textbf{Koszt śr.} & \textbf{Koszt max} & \textbf{Czas śr. [ms]} & \textbf{Iteracje śr.} \\
 \midrule
-Ważony 2-żal (konstrukcyjny) & 36839.48 (33178 - 40893) & 37265.24 (34403 - 38651) \\
-LS Steepest (Random Init) & 38347.66 (35678 - 41369) & 38776.88 (36136 - 41057) \\
-LS Move List (Random Init) & 38894.28 (35562 - 44067) & 38849.60 (36493 - 41678) \\
-LS Candidate k=10 (Random Init) & 40034.86 (36754 - 43325) & 39735.41 (37553 - 43021) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{Średnie czasy wykonania algorytmów [ms]}
-\label{tab:time_results}
-\begin{tabular}{@{}lcc@{}}
-\toprule
-\textbf{Algorytm} & \textbf{kroa200} & \textbf{krob200} \\
+\multicolumn{6}{c}{\textbf{Instancja kroa200}} \\
 \midrule
-Ważony 2-żal (konstrukcyjny) & 8.46 & 8.68 \\
-LS Steepest (Random Init) & 51.86 & 50.92 \\
-LS Move List (Random Init) & 39.51 & 38.18 \\
-LS Candidate k=10 (Random Init) & 27.70 & 28.23 \\
+MSLS (200 iter.)        & 35608 & 36599.90 & 37296 & 9332.70 & N/A \\
+ILS (Perturbacja 1, 10 ruchów)   & 35795 & 36500.70 & 37219 & 9365.10 & 174.8 \\
+LNS (Destroy-Repair 20\%)  & 36233 & 36771.90 & 37456 & 9358.00 & 165.3 \\
+LNSa (Destroy-Repair 20\%) & \textbf{30832} & \textbf{32111.00} & \textbf{33452} & 9334.90 & 1922.8 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Instancja krob200}} \\
+\midrule
+MSLS (200 iter.)        & 36237 & 36957.30 & 37474 & 5679.10 & N/A \\
+ILS (Perturbacja 1, 10 ruchów)   & 36351 & 36947.00 & 37580 & 5692.30 & 192.7 \\
+LNS (Destroy-Repair 20\%)  & 36506 & 37082.00 & 37678 & 5695.70 & 176.2 \\
+LNSa (Destroy-Repair 20\%) & \textbf{31598} & \textbf{32315.50} & \textbf{32825} & 5680.10 & 1902.4 \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \section{Wizualizacje}
 Poniżej przedstawiono wizualizacje najlepszych rozwiązań znalezionych przez poszczególne algorytmy dla obu instancji.
 
 \begin{figure}[H]
-\begin{adjustwidth}{-1.5cm}{-1.5cm}
+\begin{adjustwidth}{-1cm}{-1cm} % Dostosuj marginesy dla tej figury
     \centering
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/kroa200_Weighted_2-Regret_Cycle.png}
-        \caption{Instancja kroa200}
-        \label{fig:weighted_regret_kroa200}
-    \end{subfigure}
+        \includegraphics[width=\textwidth]{figures/kroa200_MSLS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Iterations_200_.png}
+        \caption{kroa200}
+    \end{subfigure}%
     \hfill
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/krob200_Weighted_2-Regret_Cycle.png}
-        \caption{Instancja krob200}
-        \label{fig:weighted_regret_krob200}
+        \includegraphics[width=\textwidth]{figures/krob200_MSLS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Iterations_200_.png}
+        \caption{krob200}
     \end{subfigure}
-    \caption{Wizualizacje najlepszych rozwiązań dla Ważony 2-żal}
-    \label{fig:weighted_regret}
+    \caption{Wizualizacje najlepszych rozwiązań dla MSLS}
+    \label{fig:msls}
 \end{adjustwidth}
 \end{figure}
 
 \begin{figure}[H]
-\begin{adjustwidth}{-1.5cm}{-1.5cm}
+\begin{adjustwidth}{-1cm}{-1cm}
     \centering
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/kroa200_Local_Search_Steepest_EdgeExchange_Init_Random_.png}
-        \caption{Instancja kroa200}
-        \label{fig:steepest_kroa200}
-    \end{subfigure}
+        \includegraphics[width=\textwidth]{figures/kroa200_ILS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_SmallPerturbation_n_moves_10_.png}
+        \caption{kroa200}
+    \end{subfigure}%
     \hfill
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/krob200_Local_Search_Steepest_EdgeExchange_Init_Random_.png}
-        \caption{Instancja krob200}
-        \label{fig:steepest_krob200}
+        \includegraphics[width=\textwidth]{figures/krob200_ILS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_SmallPerturbation_n_moves_10_.png}
+        \caption{krob200}
     \end{subfigure}
-    \caption{Wizualizacje najlepszych rozwiązań dla LS Steepest (Random Init)}
-    \label{fig:steepest}
+    \caption{Wizualizacje najlepszych rozwiązań dla ILS (Perturbacja 1, 10 losowych ruchów)}
+    \label{fig:ils}
 \end{adjustwidth}
 \end{figure}
 
 \begin{figure}[H]
-\begin{adjustwidth}{-1.5cm}{-1.5cm}
+\begin{adjustwidth}{-1cm}{-1cm}
     \centering
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/kroa200_Local_Search_MoveListSteepest_EdgeExchange_Init_Random_.png}
-        \caption{Instancja kroa200}
-        \label{fig:movelist_kroa200}
-    \end{subfigure}
+        \includegraphics[width=\textwidth]{figures/kroa200_LNS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_LargePerturbation_destroy_0_20__LS_on_Initial_.png}
+        \caption{kroa200}
+    \end{subfigure}%
     \hfill
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/krob200_Local_Search_MoveListSteepest_EdgeExchange_Init_Random_.png}
-        \caption{Instancja krob200}
-        \label{fig:movelist_krob200}
+        \includegraphics[width=\textwidth]{figures/krob200_LNS_Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_LargePerturbation_destroy_0_20__LS_on_Initial_.png}
+        \caption{krob200}
     \end{subfigure}
-    \caption{Wizualizacje najlepszych rozwiązań dla LS Move List (Random Init)}
-    \label{fig:movelist}
+    \caption{Wizualizacje najlepszych rozwiązań dla LNS (Destroy-Repair 20\%)}
+    \label{fig:lns}
 \end{adjustwidth}
 \end{figure}
 
 \begin{figure}[H]
-\begin{adjustwidth}{-1.5cm}{-1.5cm}
+\begin{adjustwidth}{-1cm}{-1cm}
     \centering
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/kroa200_Local_Search_Candidate_k_10_EdgeExchange_Init_Random_.png}
-        \caption{Instancja kroa200}
-        \label{fig:candidate_kroa200}
-    \end{subfigure}
+        \includegraphics[width=\textwidth]{figures/kroa200_LNSa_no_LS_after_repair__Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_LargePerturbation_destroy_0_20__LS_on_Initial_.png}
+        \caption{kroa200}
+    \end{subfigure}%
     \hfill
-    \begin{subfigure}[b]{0.6\textwidth}
+    \begin{subfigure}[b]{0.5\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/krob200_Local_Search_Candidate_k_10_EdgeExchange_Init_Random_.png}
-        \caption{Instancja krob200}
-        \label{fig:candidate_krob200}
+        \includegraphics[width=\textwidth]{figures/krob200_LNSa_no_LS_after_repair__Base_Local_Search_Candidate_k_10_EdgeExchange_Init_Random__Perturb_LargePerturbation_destroy_0_20__LS_on_Initial_.png}
+        \caption{krob200}
     \end{subfigure}
-    \caption{Wizualizacje najlepszych rozwiązań dla LS Candidate k=10 (Random Init)}
-    \label{fig:candidate}
+    \caption{Wizualizacje najlepszych rozwiązań dla LNSa (Destroy-Repair 20\%, bez LS po naprawie)}
+    \label{fig:lnsa}
 \end{adjustwidth}
 \end{figure}
 
 \section{Wnioski}
-Na podstawie przeprowadzonych eksperymentów z algorytmami przeszukiwania lokalnego startującymi z rozwiązań losowych można wyciągnąć następujące wnioski:
+Na podstawie przeprowadzonych eksperymentów można wyciągnąć następujące wnioski dotyczące zaimplementowanych algorytmów MSLS, ILS i LNS dla rozważanego problemu:
 
 \begin{enumerate}
-    \item \textbf{Jakość rozwiązań:} Najlepsze wyniki pod względem średniej jakości rozwiązania (najniższy średni koszt) nadal osiąga heurystyka konstrukcyjna \textbf{Ważony 2-żal} (średnio 36839 dla kroa200 i 37265 dla krob200), która dodatkowo znajduje lepsze rozwiązania minimalne niż algorytmy LS startujące z losowych rozwiązań. Spośród algorytmów przeszukiwania lokalnego, standardowy \textbf{LS Steepest} daje nieznacznie lepsze średnie wyniki (38348 / 38777) niż \textbf{LS Move List} (38894 / 38849), a oba te algorytmy są wyraźnie lepsze od \textbf{LS Candidate k=10} (40035 / 39735) pod względem średniego kosztu.
+    \item \textbf{Porównanie ILS/LNS z MSLS:} Zgodnie z wymaganiami zadania, dążono do tego, aby ILS i LNS dawały wyniki lepsze niż MSLS. Standardowe warianty ILS (z małą perturbacją) i LNS (z dużą perturbacją i LS po naprawie) uzyskały wyniki jakościowe (średni koszt) bardzo zbliżone, a nawet nieznacznie gorsze od MSLS w tym samym limicie czasowym (średni czas MSLS). LNS znalazł jednak najlepsze rozwiązanie minimalne dla instancji krob200.
 
-    \item \textbf{Czas wykonania:} Zgodnie z oczekiwaniami, usprawnienia mające na celu przyspieszenie LS działają. Najszybszy jest \textbf{LS Candidate k=10} (średnio 28 ms), który znacząco redukuje czas w porównaniu do standardowego \textbf{LS Steepest} (średnio 51 ms). Algorytm \textbf{LS Move List} również jest szybszy od wersji podstawowej (średnio 39 ms), co potwierdza skuteczność strategii aktualizacji listy ruchów zamiast pełnego przeszukiwania w każdej iteracji. Warto zauważyć, że heurystyka konstrukcyjna Ważony 2-żal jest najszybsza ze wszystkich (średnio 8.5 ms).
+    \item \textbf{Skuteczność LNSa:} Wariant LNS bez lokalnego przeszukiwania po fazie naprawy (LNSa) okazał się zdecydowanie najskuteczniejszy pod względem jakości znalezionych rozwiązań. Zarówno średni, jak i minimalny koszt uzyskany przez LNSa jest wyraźnie niższy niż dla pozostałych algorytmów. Jest to prawdopodobnie spowodowane możliwością wykonania znacznie większej liczby iteracji Destroy-Repair w tym samym limicie czasowym (średnio $\sim$1800-2000 iteracji LNSa vs $\sim$180-200 iteracji ILS/LNS), co pozwala na eksplorację większego obszaru przestrzeni rozwiązań. Pominięcie kosztownego kroku LS po każdej naprawie pozwala na częstsze stosowanie mechanizmu Destroy-Repair.
 
-    \item \textbf{Kompromis jakość/czas:} \textbf{LS Candidate k=10} jest najszybszym wariantem LS, ale kosztem znaczącego pogorszenia jakości znajdowanych rozwiązań w porównaniu do LS Steepest i LS Move List. \textbf{LS Move List} oferuje dobry kompromis, będąc szybszym od LS Steepest przy jedynie minimalnym pogorszeniu (a w przypadku krob200 nawet nieznacznym polepszeniu) średniej jakości rozwiązania. \textbf{LS Steepest}, mimo że najwolniejszy z wariantów LS, daje średnio najlepsze wyniki jakościowe spośród nich.
+    \item \textbf{Liczba iteracji:} Jak wspomniano, liczba iteracji (perturbacji) wykonanych przez ILS i standardowy LNS w zadanym limicie czasowym jest stosunkowo niewielka (ok. 180-200), co wynika z faktu, że większość czasu zajmuje wykonanie bazowego algorytmu lokalnego przeszukiwania po każdej perturbacji. LNSa, pomijając ten krok, wykonuje około 10 razy więcej iteracji Destroy-Repair.
 
-    \item \textbf{Porównanie z heurystyką konstrukcyjną:} Żaden z testowanych wariantów przeszukiwania lokalnego, startujący z losowego rozwiązania, nie był w stanie średnio dorównać jakością ani szybkością najlepszej heurystyce konstrukcyjnej (Ważony 2-żal). Sugeruje to, że jakość rozwiązania początkowego ma duży wpływ na wynik końcowy LS, lub że zastosowane sąsiedztwo LS (wymiana krawędzi i wierzchołków) może nie być wystarczająco silne, aby znacząco poprawić losowe starty do poziomu rozwiązań konstrukcyjnych.
+    \item \textbf{Rodzaj perturbacji:} Mała perturbacja w ILS (10 losowych ruchów) wydaje się być niewystarczająca, aby efektywnie uciec z lokalnych optimów i znaleźć znacząco lepsze rozwiązania niż MSLS w danym czasie. Duża perturbacja w LNS (Destroy 20\% + Repair Ważonym 2-żalem) w połączeniu z pominięciem LS po naprawie (LNSa) okazała się bardzo efektywną strategią dla tego problemu.
 
-    \item \textbf{Wpływ strategii usprawnień:} Strategia listy ruchów (Move List) okazała się skuteczna w redukcji czasu przy niewielkim wpływie na jakość. Strategia ruchów kandydackich (Candidate k=10) znacząco przyspieszyła algorytm, ale kosztem zauważalnego spadku jakości. Dobór parametru `k` w metodzie Candidate może mieć istotny wpływ na ten kompromis.
+    \item \textbf{Kompromis jakość/czas:} Wszystkie algorytmy ILS i LNS działały w podobnym czasie (zgodnie z założeniem eksperymentu). Kluczową różnicą jest jakość. LNSa oferuje najlepszą jakość kosztem rezygnacji z intensyfikacji przez LS po każdej naprawie, co jednak okazuje się korzystne dzięki znacznie większej liczbie cykli Destroy-Repair. Standardowe ILS i LNS oferują jakość porównywalną z MSLS.
 
 \end{enumerate}
 
-Podsumowując, usprawnienia algorytmu przeszukiwania lokalnego (Move List, Candidate Moves) pozwalają na skrócenie czasu jego działania. Wybór między nimi a wersją standardową zależy od priorytetu - szybkości czy jakości. Jednakże, w kontekście tego problemu i testowanych wariantów, wydaje się, że lepsze wyniki globalnie (zarówno pod względem jakości, jak i czasu) można uzyskać stosując zaawansowaną heurystykę konstrukcyjną, taką jak Ważony 2-żal, niż stosując przeszukiwanie lokalne na rozwiązaniach losowych.
+Podsumowując, najskuteczniejszą zaimplementowaną strategią okazał się algorytm LNSa, który dzięki mechanizmowi Destroy-Repair z heurystyką Ważony 2-żal i rezygnacji z kosztownego kroku LS po naprawie, był w stanie znacząco poprawić jakość rozwiązania w porównaniu do MSLS, ILS i standardowego LNS w tym samym limicie czasowym.
 
 \section{Kod źródłowy}
 Pełny kod źródłowy implementacji wszystkich algorytmów jest dostępny w repozytorium GitHub:
-\url{https://github.com/Veanir/imo-2}
+\url{https://github.com/Veanir/imo-4}
 
 \end{document} 
